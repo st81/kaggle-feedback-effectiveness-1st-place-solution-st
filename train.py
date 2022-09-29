@@ -18,6 +18,10 @@ import yaml
 from types import SimpleNamespace
 import os
 import re
+from utils.time import now
+import wandb
+
+from custom_logger import init_wandb
 
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -133,6 +137,9 @@ def get_model(cfg):
 parser = argparse.ArgumentParser(description="")
 
 parser.add_argument("-C", "--config", help="config filename")
+parser.add_argument("--debug", action="store_true")
+parser.add_argument("--wandb_api_key", type=str, default=None)
+parser.add_argument("--wandb_group", type=str, default=None)
 parser_args, _ = parser.parse_known_args(sys.argv)
 cfg = yaml.safe_load(open(parser_args.config).read())
 for k, v in cfg.items():
@@ -144,7 +151,23 @@ print(cfg)
 os.makedirs(f"output/{cfg.experiment_name}", exist_ok=True)
 cfg.CustomDataset = importlib.import_module(cfg.dataset_class).CustomDataset
 
+
+def change_df_for_debug(train_df: pd.DataFrame) -> pd.DataFrame:
+    essay_ids = train_df["essay_id"].unique()
+    df = train_df[train_df["essay_id"].isin(essay_ids[:2])]
+    return df
+
+
 if __name__ == "__main__":
+    training_start_timestamp = now()
+    if parser_args.wandb_api_key:
+        init_wandb(
+            training_start_timestamp,
+            False,
+            parser_args.wandb_api_key,
+            parser_args.wandb_group,
+        )
+
     device = "cuda:0"
     cfg.device = device
 
@@ -168,6 +191,10 @@ if __name__ == "__main__":
             train_df = train_df[train_df.fold != cfg.dataset.fold].copy()
     else:
         val_df = train_df.copy()
+
+    if parser_args.debug:
+        train_df, val_df = change_df_for_debug(train_df), change_df_for_debug(val_df)
+    print(train_df, val_df, sep="\n")
 
     train_dataset = cfg.CustomDataset(train_df, mode="train", cfg=cfg)
     val_dataset = cfg.CustomDataset(val_df, mode="val", cfg=cfg)
@@ -308,6 +335,13 @@ if __name__ == "__main__":
                 progress_bar.set_description(
                     f"lr: {np.round(optimizer.param_groups[0]['lr'],7)}, loss: {np.mean(losses[-10:]):.4f}"
                 )
+                if parser_args.wandb_api_key:
+                    wandb.log(
+                        {
+                            "lr": np.round(optimizer.param_groups[0]["lr"], 7),
+                            "train_loss": np.mean(losses[-10:]),
+                        }
+                    )
 
         progress_bar = tqdm(range(len(val_dataloader)))
         val_it = iter(val_dataloader)
