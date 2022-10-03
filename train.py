@@ -401,6 +401,8 @@ if __name__ == "__main__":
             else:
                 metric = None
         print("Validation metric", metric)
+        if parser_args.wandb_api_key:
+            wandb.log({"val_log_loss": metric})
 
         if cfg.training.epochs > 0:
             checkpoint = {"model": model.state_dict()}
